@@ -47,6 +47,14 @@ export type CacheCompactOptions = {
   debug?: boolean
   /** Name of the slash command that starts a handoff on demand (V1 only). `false` disables it. Default "handoff". */
   handoffCommand?: string | false
+  /**
+   * Safety net: if a request would still exceed the context window after the cut
+   * (no summary yet, or a single huge tool output), replace the oldest large tool
+   * outputs with a placeholder until it fits (V1 only). Default false.
+   */
+  fitContext?: boolean
+  /** Tokens kept free for the system prompt, tool schemas and the reply when fitting. Default 28000. */
+  fitReserveTokens?: number
 }
 
 export const DEFAULTS = {
@@ -220,6 +228,8 @@ export type Core = {
   onDeleted(sessionID: string): void
   /** Whether a summary request is in flight, so the adapter can cap output tokens. */
   isPending(sessionID: string): boolean
+  /** The model's context window (provider-reported, else the configured fallback). */
+  limitFor(providerID: string, modelID: string): Promise<number>
   /**
    * The user ran `/handoff`: the host is about to send the summary instruction
    * itself, so treat it as in flight (caps output, blocks a concurrent trip).
@@ -444,6 +454,7 @@ export function createCore(
     isPending(sessionID) {
       return states.get(sessionID)?.pending ?? false
     },
+    limitFor: resolveLimit,
     beginManual(sessionID) {
       const state = ensureState(sessionID)
       if (state.pending) return

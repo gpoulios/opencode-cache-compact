@@ -181,3 +181,63 @@ export function contentText(message: AnyMessageV2 | undefined): string {
     .join("\n")
     .trim()
 }
+
+/** Conservative (over-counting) average; code and logs tokenize worse than prose. */
+const CHARS_PER_TOKEN = 3.2
+/** Tool outputs at or below this size are not worth replacing. */
+const MIN_TRIM_CHARS = 400
+
+const isCompletedTool = (part: AnyPart): boolean =>
+  part?.type === "tool" &&
+  (part.state as any)?.status === "completed" &&
+  typeof (part.state as any)?.output === "string"
+
+function partChars(part: AnyPart): number {
+  if (part?.type === "text" || part?.type === "reasoning") {
+    return typeof part.text === "string" ? part.text.length : 0
+  }
+  if (part?.type !== "tool") return 0
+  const state: any = part.state
+  const input = state?.input === undefined ? 0 : JSON.stringify(state.input).length
+  return input + (typeof state?.output === "string" ? state.output.length : 0)
+}
+
+/** Rough token count of a message list: no tokenizer, only characters. */
+export function estimateTokens(messages: AnyMessage[]): number {
+  let chars = 0
+  for (const m of messages) for (const part of m?.parts ?? []) chars += partChars(part)
+  return Math.ceil(chars / CHARS_PER_TOKEN)
+}
+
+/**
+ * Last-resort guard against a request the server will refuse. When the estimate
+ * is still over `budgetTokens`, replace the oldest completed tool outputs with a
+ * one-line placeholder until it fits. Mutates the outgoing copy only.
+ *
+ * Returns how many outputs were replaced and the estimate before and after; if
+ * every large output is gone and it still does not fit, `after` stays over budget.
+ */
+export function shrinkToFit(
+  messages: AnyMessage[],
+  budgetTokens: number,
+): { trimmed: number; before: number; after: number } {
+  const before = estimateTokens(messages)
+  let total = before
+  let trimmed = 0
+  for (const message of messages) {
+    if (total <= budgetTokens) break
+    for (const part of message?.parts ?? []) {
+      if (total <= budgetTokens) break
+      if (!isCompletedTool(part)) continue
+      const state: any = part.state
+      if (state.output.length <= MIN_TRIM_CHARS) continue
+      const placeholder = `[tool output removed to fit the context window: ${state.output.length} chars]`
+      total -= Math.ceil((state.output.length - placeholder.length) / CHARS_PER_TOKEN)
+      state.output = placeholder
+      // Media attached to the result is sent too; drop it with the text.
+      if (Array.isArray(state.attachments)) state.attachments = []
+      trimmed++
+    }
+  }
+  return { trimmed, before, after: Math.max(total, 0) }
+}

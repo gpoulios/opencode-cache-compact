@@ -90,6 +90,8 @@ Set `compaction.auto` to `false` if you want this plugin to be the only compacti
 | `autoResume` | boolean | `true` | Send a continue turn after the summary so the cut applies at once. Set `false` to wait for the next human message. |
 | `resumePrompt` | string | `Continue from where you left off.` | The turn sent when `autoResume` fires. |
 | `handoffCommand` | string \| false | `"handoff"` | Name of the slash command that starts a handoff on demand (V1). `false` disables it. A command with that name already defined in your config is left alone. |
+| `fitContext` | boolean | `false` | Safety net (V1): if a request still exceeds the window after the cut, replace the oldest large tool outputs with a placeholder until the estimate fits. Only the outgoing copy changes, never the stored session. |
+| `fitReserveTokens` | number | `28000` | Tokens kept free for the system prompt, tool schemas and the reply when `fitContext` decides how much to trim. |
 | `abortOnTrip` | boolean | `true` | Abort the running turn on trip so a long turn can't overshoot. |
 | `abortSettleMs` | number | `300` | Delay after aborting before sending the summary. |
 | `disablePrune` | boolean | `true` | Force `compaction.prune = false`. |
