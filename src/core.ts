@@ -273,8 +273,9 @@ export function createCore(
     const prompt = cfg.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT
     const reply = await host.summarize(sessionID, prompt)
     const hasText = typeof reply?.text === "string" && reply.text.trim().length > 0
-    const hasIDs = Boolean(reply?.summaryAssistantID)
-    if (!hasText && !hasIDs) {
+    // Ids alone are not enough: with no text the cut is a no-op, yet recording
+    // these ids would replace a working cut and send the whole uncut history.
+    if (!hasText) {
       log("warn", "summary response was empty; not cutting", { sessionID })
       return false
     }

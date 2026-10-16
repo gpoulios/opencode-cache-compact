@@ -374,3 +374,38 @@ test("leaves the history alone when no summary exchange exists", async () => {
     ["u1", "a1"],
   )
 })
+
+test("an empty summary reply keeps the previous cut instead of replacing it", async () => {
+  const calls: Call[] = []
+  const client = makeClient(calls) as any
+  let reply = "FIRST SUMMARY"
+  client.session.prompt = async () => ({
+    data: {
+      info: { role: "assistant", id: reply ? "sum1" : "sum2", parentID: reply ? "req1" : "req2" },
+      parts: reply ? [{ type: "text", text: reply }] : [],
+    },
+  })
+  const hooks = createServer(client, { threshold: 50, autoResume: false, abortSettleMs: 0 })
+
+  await hooks.event!(assistantTurn() as any)
+  await settle()
+  reply = ""
+  await hooks.event!(assistantTurn({ id: "a2", tokens: { input: 1_000, output: 0, reasoning: 0, cache: { read: 0, write: 0 } } }) as any)
+  await hooks.event!(assistantTurn({ id: "a3" }) as any)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  const msg = (id: string, role: string, text: string, parentID?: string) => ({
+    info: { id, role, sessionID: "s1", ...(parentID ? { parentID } : {}) },
+    parts: [{ type: "text", text }],
+  })
+  const messages: any[] = [
+    msg("u0", "user", "task"),
+    msg("req1", "user", DEFAULT_SUMMARY_PROMPT),
+    msg("sum1", "assistant", "FIRST SUMMARY", "req1"),
+    msg("req2", "user", DEFAULT_SUMMARY_PROMPT),
+    msg("sum2", "assistant", "", "req2"),
+    msg("u2", "user", "continue"),
+  ]
+  await hooks["experimental.chat.messages.transform"]!({}, { messages } as any)
+  assert.equal(messages[0]!.parts[0]!.text, "## Prior work summary\n\nFIRST SUMMARY")
+})
