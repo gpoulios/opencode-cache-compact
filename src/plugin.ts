@@ -10,6 +10,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 import type { AssistantMessage, Event } from "@opencode-ai/sdk"
 import { cutMessages, extractText, findSummaryKeys, shrinkToFit, type AnyMessage } from "./cut.ts"
+import { ABORT_MATCH_WINDOW_MS, explainHandoffCancellations } from "./subagent.ts"
 import {
   createCore,
   DEFAULT_SUMMARY_PROMPT,
@@ -242,6 +243,9 @@ export const createServer = (
       const sessionID = messages[0]?.info?.sessionID
       if (!sessionID) return
       applyCut(sessionID, messages)
+      explainHandoffCancellations(messages, (taskID, failedAt) =>
+        core.wasAbortedNear(taskID, failedAt, ABORT_MATCH_WINDOW_MS),
+      )
       if (options.fitContext) await fitToContext(sessionID, messages)
     },
   }

@@ -490,3 +490,27 @@ test("fitContext trims old tool outputs when the request still exceeds the windo
   await off["experimental.chat.messages.transform"]!({}, { messages: untouched } as any)
   assert.equal(untouched[1].parts[0].state.output.length, 40_000)
 })
+
+test("tells the parent a subagent stopped by a trip is compacting, not cancelled", async () => {
+  const hooks = createServer({ client: makeClient([]) } as any, { threshold: 50, autoResume: false, abortSettleMs: 0 })
+  const tripStart = Date.now()
+  // The subagent session "s1" crosses the threshold and is aborted for its summary.
+  await hooks.event!(assistantTurn() as any)
+  await settle()
+
+  const taskPart = (sessionId: string, end: number) => ({
+    type: "tool",
+    tool: "task",
+    state: { status: "error", error: "Task cancelled", metadata: { sessionId }, time: { start: tripStart - 5_000, end } },
+  })
+  const messages: any[] = [
+    { info: { id: "p1", role: "assistant", sessionID: "parent" }, parts: [taskPart("s1", Date.now())] },
+    { info: { id: "p2", role: "assistant", sessionID: "parent" }, parts: [taskPart("other", Date.now())] },
+    { info: { id: "p3", role: "assistant", sessionID: "parent" }, parts: [taskPart("s1", tripStart + 600_000)] },
+  ]
+  await hooks["experimental.chat.messages.transform"]!({}, { messages } as any)
+
+  assert.match(messages[0].parts[0].state.error, /task_id=s1/)
+  assert.equal(messages[1].parts[0].state.error, "Task cancelled") // a different session was never aborted
+  assert.equal(messages[2].parts[0].state.error, "Task cancelled") // a later, genuine cancellation
+})

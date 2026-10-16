@@ -91,6 +91,8 @@ type SessionState = {
   pending: boolean
   /** The in-flight summary was requested by the user (`/handoff`), not by a trip. */
   manual?: boolean
+  /** When (ms since epoch) a trip aborted this session's running turn. */
+  abortedAt: number[]
   /**
    * Whether a new summary may be requested. Cleared when a summary is written
    * and only set again once a step reports usage back under the threshold, i.e.
@@ -228,6 +230,8 @@ export type Core = {
   onDeleted(sessionID: string): void
   /** Whether a summary request is in flight, so the adapter can cap output tokens. */
   isPending(sessionID: string): boolean
+  /** Whether a trip aborted this session within `withinMs` of `time` (ms since epoch). */
+  wasAbortedNear(sessionID: string, time: number, withinMs: number): boolean
   /** The model's context window (provider-reported, else the configured fallback). */
   limitFor(providerID: string, modelID: string): Promise<number>
   /**
@@ -259,7 +263,7 @@ export function createCore(
   const ensureState = (sessionID: string): SessionState => {
     let state = states.get(sessionID)
     if (!state) {
-      state = { pending: false, armed: true, cooldownUntil: 0, lastUsed: 0 }
+      state = { pending: false, armed: true, cooldownUntil: 0, lastUsed: 0, abortedAt: [] }
       states.set(sessionID, state)
     }
     return state
@@ -331,6 +335,7 @@ export function createCore(
     let ok = false
     try {
       if (cfg.abortOnTrip) {
+        state.abortedAt.push(Date.now())
         try {
           await host.abort(sessionID)
         } catch {
@@ -453,6 +458,10 @@ export function createCore(
     },
     isPending(sessionID) {
       return states.get(sessionID)?.pending ?? false
+    },
+    wasAbortedNear(sessionID, time, withinMs) {
+      const aborts = states.get(sessionID)?.abortedAt ?? []
+      return aborts.some((abortedAt) => Math.abs(abortedAt - time) <= withinMs)
     },
     limitFor: resolveLimit,
     beginManual(sessionID) {
