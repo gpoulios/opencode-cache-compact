@@ -45,6 +45,8 @@ export type CacheCompactOptions = {
   disablePrune?: boolean
   /** Verbose debug logging. Default false. */
   debug?: boolean
+  /** Name of the slash command that starts a handoff on demand (V1 only). `false` disables it. Default "handoff". */
+  handoffCommand?: string | false
 }
 
 export const DEFAULTS = {
@@ -79,6 +81,8 @@ export type LogLevel = "debug" | "info" | "warn" | "error"
 type SessionState = {
   /** A summary request is in flight; do not trip again. */
   pending: boolean
+  /** The in-flight summary was requested by the user (`/handoff`), not by a trip. */
+  manual?: boolean
   /**
    * Whether a new summary may be requested. Cleared when a summary is written
    * and only set again once a step reports usage back under the threshold, i.e.
@@ -216,6 +220,17 @@ export type Core = {
   onDeleted(sessionID: string): void
   /** Whether a summary request is in flight, so the adapter can cap output tokens. */
   isPending(sessionID: string): boolean
+  /**
+   * The user ran `/handoff`: the host is about to send the summary instruction
+   * itself, so treat it as in flight (caps output, blocks a concurrent trip).
+   */
+  beginManual(sessionID: string): void
+  /**
+   * The session went idle. When a manual handoff was in flight, close it and
+   * return true: the previous cut is forgotten so the next request re-discovers
+   * the new summary exchange from the session history.
+   */
+  endManual(sessionID: string): boolean
 }
 
 export function createCore(
@@ -428,6 +443,30 @@ export function createCore(
     },
     isPending(sessionID) {
       return states.get(sessionID)?.pending ?? false
+    },
+    beginManual(sessionID) {
+      const state = ensureState(sessionID)
+      if (state.pending) return
+      state.pending = true
+      state.manual = true
+      log("info", "manual handoff requested", { sessionID })
+    },
+    endManual(sessionID) {
+      const state = states.get(sessionID)
+      if (!state?.manual) return false
+      state.manual = false
+      state.pending = false
+      // Forget the old cut so the transform hook adopts the newest summary pair.
+      state.boundaryUserID = undefined
+      state.summaryAssistantID = undefined
+      state.summaryPrompt = undefined
+      state.summaryText = undefined
+      // Same latch as a fresh summary: re-arm only once usage is seen under the threshold.
+      state.armed = false
+      state.lastUsed = 0
+      state.cooldownUntil = Date.now() + 30_000
+      log("info", "manual handoff finished", { sessionID })
+      return true
     },
   }
 }

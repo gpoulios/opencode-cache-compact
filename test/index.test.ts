@@ -375,6 +375,65 @@ test("leaves the history alone when no summary exchange exists", async () => {
   )
 })
 
+test("registers /handoff with the summary prompt, unless disabled or already defined", async () => {
+  const config: any = {}
+  await createServer({ client: makeClient([]) } as any, {}).config!(config)
+  assert.equal(config.command.handoff.template, DEFAULT_SUMMARY_PROMPT)
+
+  const own: any = { command: { handoff: { template: "mine" } } }
+  await createServer({ client: makeClient([]) } as any, {}).config!(own)
+  assert.equal(own.command.handoff.template, "mine")
+
+  const off: any = {}
+  await createServer({ client: makeClient([]) } as any, { handoffCommand: false }).config!(off)
+  assert.equal(off.command, undefined)
+})
+
+test("/handoff caps the summary, does not trip, and switches the cut to the new summary on idle", async () => {
+  const calls: Call[] = []
+  const hooks = createServer({ client: makeClient(calls) } as any, { threshold: 50, autoResume: false })
+
+  await hooks["command.execute.before"]!({ command: "handoff", sessionID: "s1", arguments: "" }, { parts: [] })
+  const output = { maxOutputTokens: 9999, options: {} as Record<string, any> }
+  await hooks["chat.params"]!({ sessionID: "s1" } as any, output as any)
+  assert.equal(output.maxOutputTokens, 1200)
+
+  // Usage above the threshold while the summary runs must not start a second summary.
+  await hooks.event!(assistantTurn() as any)
+  await settle()
+  assert.equal(prompts(calls).length, 0)
+
+  await hooks.event!(idle() as any)
+  const msg = (id: string, role: string, text: string, parentID?: string) => ({
+    info: { id, role, sessionID: "s1", ...(parentID ? { parentID } : {}) },
+    parts: [{ type: "text", text }],
+  })
+  const messages: any[] = [
+    msg("u1", "user", "task"),
+    msg("a1", "assistant", "ok", "u1"),
+    msg("req", "user", DEFAULT_SUMMARY_PROMPT),
+    msg("sum", "assistant", "NEW SUMMARY", "req"),
+    msg("u2", "user", "continue"),
+  ]
+  await hooks["experimental.chat.messages.transform"]!({}, { messages } as any)
+  assert.deepEqual(
+    messages.map((m) => m.info.id),
+    ["req", "u2"],
+  )
+  assert.equal(messages[0]!.parts[0]!.text, "## Prior work summary\n\nNEW SUMMARY")
+  const after = { maxOutputTokens: 9999, options: {} }
+  await hooks["chat.params"]!({ sessionID: "s1" } as any, after as any)
+  assert.equal(after.maxOutputTokens, 9999)
+})
+
+test("other commands do not start a handoff", async () => {
+  const hooks = createServer({ client: makeClient([]) } as any, {})
+  await hooks["command.execute.before"]!({ command: "review", sessionID: "s1", arguments: "" }, { parts: [] })
+  const output = { maxOutputTokens: 9999, options: {} }
+  await hooks["chat.params"]!({ sessionID: "s1" } as any, output as any)
+  assert.equal(output.maxOutputTokens, 9999)
+})
+
 test("an empty summary reply keeps the previous cut instead of replacing it", async () => {
   const calls: Call[] = []
   const client = makeClient(calls) as any
@@ -409,3 +468,4 @@ test("an empty summary reply keeps the previous cut instead of replacing it", as
   await hooks["experimental.chat.messages.transform"]!({}, { messages } as any)
   assert.equal(messages[0]!.parts[0]!.text, "## Prior work summary\n\nFIRST SUMMARY")
 })
+

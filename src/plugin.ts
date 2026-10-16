@@ -127,12 +127,30 @@ export const createServer = (
     })
   }
 
+  const handoffCommand = options.handoffCommand ?? "handoff"
+
   const hooks: Awaited<ReturnType<Plugin>> = {
     config: async (config) => {
-      if (!(options.disablePrune ?? true)) return
       const mutable = config as any
-      const compaction: any = (mutable.compaction ??= {})
-      if (compaction.prune === undefined) compaction.prune = false
+      if (options.disablePrune ?? true) {
+        const compaction: any = (mutable.compaction ??= {})
+        if (compaction.prune === undefined) compaction.prune = false
+      }
+      if (handoffCommand) {
+        // The command's text is the summary instruction itself, so the exchange it
+        // creates is exactly what the cut looks for in the session history.
+        const commands: any = (mutable.command ??= {})
+        commands[handoffCommand] ??= {
+          description: "Summarize the session so the next request starts from the summary",
+          template: core.options.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
+        }
+      }
+    },
+
+    "command.execute.before": async (hookInput) => {
+      if (handoffCommand && hookInput.command === handoffCommand) {
+        core.beginManual(hookInput.sessionID)
+      }
     },
 
     event: async ({ event }: { event: Event }) => {
@@ -149,6 +167,7 @@ export const createServer = (
       if (event.type === "session.idle") {
         // Fallback: message.updated already fires this, but idle catches the
         // case where the last assistant message never completed.
+        if (core.endManual(event.properties.sessionID)) return
         core.onIdle(event.properties.sessionID)
         return
       }

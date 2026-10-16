@@ -89,6 +89,7 @@ Set `compaction.auto` to `false` if you want this plugin to be the only compacti
 | `contextLimit` | number | `131072` | Fallback window if the provider reports none. |
 | `autoResume` | boolean | `true` | Send a continue turn after the summary so the cut applies at once. Set `false` to wait for the next human message. |
 | `resumePrompt` | string | `Continue from where you left off.` | The turn sent when `autoResume` fires. |
+| `handoffCommand` | string \| false | `"handoff"` | Name of the slash command that starts a handoff on demand (V1). `false` disables it. A command with that name already defined in your config is left alone. |
 | `abortOnTrip` | boolean | `true` | Abort the running turn on trip so a long turn can't overshoot. |
 | `abortSettleMs` | number | `300` | Delay after aborting before sending the summary. |
 | `disablePrune` | boolean | `true` | Force `compaction.prune = false`. |
@@ -155,3 +156,7 @@ test/
 ## 📄 License
 
 [MIT](LICENSE).
+
+## Manual handoff
+
+On V1 the plugin registers a `/handoff` command. It sends the same summary instruction a trip would, with the output cap and low reasoning effort applied, and does not abort or resume. The cut takes effect on your next message. Run it without arguments: any argument text is appended to the instruction, so the exchange no longer matches and is not recognised as a summary. It needs a request that fits in the context, so use it before the limit, not after an overflow.
