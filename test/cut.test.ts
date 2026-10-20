@@ -1,7 +1,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-import { cutMessages, cutV2Messages, estimateTokens, extractText, findSummaryKeys, shrinkToFit, SUMMARY_HEADING, type AnyMessage, type AnyMessageV2 } from "../src/cut.ts"
+import { cutMessages, cutV2Messages, extractText, findSummaryKeys, SUMMARY_HEADING, type AnyMessage, type AnyMessageV2 } from "../src/cut.ts"
 
 const text = (id: string, body: string): AnyMessage => ({
   info: { id, role: "user", sessionID: "ses_1" },
@@ -158,42 +158,4 @@ test("findSummaryKeys returns undefined without a matching summary exchange", ()
   assert.equal(findSummaryKeys([text("u1", "task"), reply("a1", "u1", "ok")], "SUMMARIZE"), undefined)
   assert.equal(findSummaryKeys([text("req1", "other prompt"), reply("sum1", "req1", "X")], "SUMMARIZE"), undefined)
   assert.equal(findSummaryKeys([], "SUMMARIZE"), undefined)
-})
-
-const toolMessage = (id: string, output: string, extra: Record<string, unknown> = {}) => ({
-  info: { id, role: "assistant", sessionID: "s1" },
-  parts: [{ type: "tool", state: { status: "completed", input: { a: 1 }, output, ...extra } }],
-})
-
-test("shrinkToFit replaces the oldest large tool outputs first, only as far as needed", () => {
-  const messages: any[] = [
-    toolMessage("m1", "x".repeat(32_000)),
-    toolMessage("m2", "y".repeat(32_000)),
-    toolMessage("m3", "z".repeat(32_000)),
-  ]
-  const before = estimateTokens(messages)
-  const result = shrinkToFit(messages, before - 11_000)
-  assert.equal(result.trimmed, 2)
-  assert.match(messages[0].parts[0].state.output, /^\[tool output removed/)
-  assert.match(messages[1].parts[0].state.output, /32000 chars/)
-  assert.equal(messages[2].parts[0].state.output.length, 32_000)
-  assert.ok(result.after <= before - 11_000)
-})
-
-test("shrinkToFit leaves a request that fits, small outputs and running tools alone", () => {
-  const messages: any[] = [
-    toolMessage("m1", "small"),
-    { info: { id: "m2", role: "assistant" }, parts: [{ type: "tool", state: { status: "running", input: {} } }] },
-  ]
-  const result = shrinkToFit(messages, 10_000)
-  assert.deepEqual(result.trimmed, 0)
-  assert.equal(messages[0].parts[0].state.output, "small")
-})
-
-test("shrinkToFit drops attachments with the output and reports when it still cannot fit", () => {
-  const messages: any[] = [toolMessage("m1", "x".repeat(4_000), { attachments: [{ type: "file" }] })]
-  const result = shrinkToFit(messages, 10)
-  assert.equal(result.trimmed, 1)
-  assert.deepEqual(messages[0].parts[0].state.attachments, [])
-  assert.ok(result.after > 10)
 })

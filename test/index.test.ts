@@ -469,28 +469,6 @@ test("an empty summary reply keeps the previous cut instead of replacing it", as
   assert.equal(messages[0]!.parts[0]!.text, "## Prior work summary\n\nFIRST SUMMARY")
 })
 
-test("fitContext trims old tool outputs when the request still exceeds the window", async () => {
-  const calls: Call[] = []
-  const messages: any[] = [
-    { info: { id: "u1", role: "user", sessionID: "s1", model: { providerID: "p", modelID: "m" } }, parts: [{ type: "text", text: "task" }] },
-    { info: { id: "a1", role: "assistant", sessionID: "s1", parentID: "u1" }, parts: [{ type: "tool", state: { status: "completed", input: {}, output: "x".repeat(40_000) } }] },
-  ]
-  // Window 10_000 tokens, reserve 2_000: the 40K-char (about 12.5K token) output cannot stay.
-  const on = createServer({ client: makeClient(calls) } as any, { fitContext: true, fitReserveTokens: 2_000 })
-  await on["experimental.chat.messages.transform"]!({}, { messages } as any)
-  assert.match(messages[1].parts[0].state.output, /^\[tool output removed/)
-  assert.ok(calls.some((c) => c.name === "log" && /trimmed tool outputs/.test(c.args.body.message)))
-
-  __resetSharedState()
-  const untouched: any[] = JSON.parse(JSON.stringify([
-    { info: { id: "u1", role: "user", sessionID: "s1", model: { providerID: "p", modelID: "m" } }, parts: [{ type: "text", text: "task" }] },
-    { info: { id: "a1", role: "assistant", sessionID: "s1", parentID: "u1" }, parts: [{ type: "tool", state: { status: "completed", input: {}, output: "x".repeat(40_000) } }] },
-  ]))
-  const off = createServer({ client: makeClient([]) } as any, {})
-  await off["experimental.chat.messages.transform"]!({}, { messages: untouched } as any)
-  assert.equal(untouched[1].parts[0].state.output.length, 40_000)
-})
-
 test("tells the parent a subagent stopped by a trip is compacting, not cancelled", async () => {
   const hooks = createServer({ client: makeClient([]) } as any, { threshold: 50, autoResume: false, abortSettleMs: 0 })
   const tripStart = Date.now()

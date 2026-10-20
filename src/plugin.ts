@@ -9,7 +9,7 @@
 
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 import type { AssistantMessage, Event } from "@opencode-ai/sdk"
-import { cutMessages, extractText, findSummaryKeys, shrinkToFit, type AnyMessage } from "./cut.ts"
+import { cutMessages, extractText, findSummaryKeys, type AnyMessage } from "./cut.ts"
 import { ABORT_MATCH_WINDOW_MS, explainHandoffCancellations } from "./subagent.ts"
 import {
   createCore,
@@ -130,43 +130,6 @@ export const createServer = (
 
   const handoffCommand = options.handoffCommand ?? "handoff"
 
-  const applyCut = (sessionID: string, messages: AnyMessage[]): void => {
-    let keys = core.cutKeys(sessionID)
-    if (!keys?.boundaryUserID || !keys.summaryAssistantID) {
-      // No in-memory cut: either nothing was summarized yet, or OpenCode was
-      // restarted since. The summary exchange is still in the session, so look
-      // for it and re-adopt it rather than sending the whole uncut history.
-      const found = findSummaryKeys(
-        messages,
-        core.options.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
-      )
-      if (!found) return
-      core.restoreCut(sessionID, found)
-      keys = core.cutKeys(sessionID)
-      if (!keys?.boundaryUserID || !keys.summaryAssistantID) return
-    }
-    cutMessages(messages, keys.boundaryUserID, keys.summaryAssistantID)
-  }
-
-  /** Last resort: shrink the oldest tool outputs when the request still cannot fit. */
-  const fitToContext = async (sessionID: string, messages: AnyMessage[]): Promise<void> => {
-    const lastUser = [...messages].reverse().find((m) => m?.info?.role === "user")
-    const model = lastUser?.info?.model as { providerID?: string; modelID?: string } | undefined
-    if (!model?.providerID || !model.modelID) return
-    const limit = await core.limitFor(model.providerID, model.modelID)
-    const budget = limit - (options.fitReserveTokens ?? 28_000)
-    if (budget <= 0) return
-    const result = shrinkToFit(messages, budget)
-    if (result.trimmed === 0 && result.after <= budget) return
-    host.log(result.after > budget ? "warn" : "info", "trimmed tool outputs to fit the context window", {
-      sessionID,
-      trimmed: result.trimmed,
-      estimatedBefore: result.before,
-      estimatedAfter: result.after,
-      budget,
-    })
-  }
-
   const hooks: Awaited<ReturnType<Plugin>> = {
     config: async (config) => {
       const mutable = config as any
@@ -242,11 +205,24 @@ export const createServer = (
       if (!Array.isArray(messages) || messages.length === 0) return
       const sessionID = messages[0]?.info?.sessionID
       if (!sessionID) return
-      applyCut(sessionID, messages)
       explainHandoffCancellations(messages, (taskID, failedAt) =>
         core.wasAbortedNear(taskID, failedAt, ABORT_MATCH_WINDOW_MS),
       )
-      if (options.fitContext) await fitToContext(sessionID, messages)
+      let keys = core.cutKeys(sessionID)
+      if (!keys?.boundaryUserID || !keys.summaryAssistantID) {
+        // No in-memory cut: either nothing was summarized yet, or OpenCode was
+        // restarted since. The summary exchange is still in the session, so look
+        // for it and re-adopt it rather than sending the whole uncut history.
+        const found = findSummaryKeys(
+          messages,
+          core.options.summaryPrompt ?? DEFAULT_SUMMARY_PROMPT,
+        )
+        if (!found) return
+        core.restoreCut(sessionID, found)
+        keys = core.cutKeys(sessionID)
+        if (!keys?.boundaryUserID || !keys.summaryAssistantID) return
+      }
+      cutMessages(messages, keys.boundaryUserID, keys.summaryAssistantID)
     },
   }
 
